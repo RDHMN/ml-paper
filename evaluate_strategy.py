@@ -28,30 +28,25 @@ def get_data():
     return data
 
 
-def determine_action(row, model_key, trade_cost):
+def determine_action(row, model_key, unit_size, trade_cost):
     '''
     Helper method determines Buy/Sell/Hold action for a given prior model
     '''
     ci_lower_key = f'ci_lower_{model_key}'
     ci_upper_key = f'ci_upper_{model_key}'
     action = 'Hold'
-    correct = False
-    
+
     # DA exceeds upper bound => short the DA price 
-    # (correct checks if action is profitable)
-    if row['dayAhead_NL'] > row[ci_upper_key]:
+    if row['dayAhead_NL'] > row[ci_upper_key] + (unit_size * trade_cost):
         action = 'Sell'
-        correct = row['dayAhead_NL'] > row['vwap'] + trade_cost
 
     # DA exceeds lower bound => go long the DA price
-    elif row['dayAhead_NL'] < row[ci_lower_key]:
+    elif row['dayAhead_NL'] < row[ci_lower_key] - (unit_size * trade_cost):
         action = 'Buy'
-        correct = row['dayAhead_NL']  < row['vwap'] - trade_cost
     
     return {
         'DateTime': row['DateTime'],
         'Action': action,
-        'Correct': correct,
         'dayAhead_NL': row['dayAhead_NL'],
         'vwap': row['vwap'],
         ci_lower_key: row[ci_lower_key],
@@ -67,13 +62,11 @@ def analyse_strategy(df, model_key, unit_size, trade_cost):
     datetime_points = []
     profits = []
     cumulative_profits = []
-    correctness = []
     cumulative_profit = 0
     
     for index, row in df.iterrows():
-        action_data = determine_action(row, model_key, trade_cost)
+        action_data = determine_action(row, model_key, unit_size, trade_cost)
         action = action_data['Action']
-        correct = action_data['Correct']
         profit = 0
         
         if action == 'Sell':
@@ -89,12 +82,10 @@ def analyse_strategy(df, model_key, unit_size, trade_cost):
             datetime_points.append(action_data['DateTime'])
             profits.append(profit)
             cumulative_profits.append(cumulative_profit)
-            correctness.append(correct)
     
     result_df = pd.DataFrame({
         'DateTime': datetime_points,
         'Action': actions,
-        'Correct': correctness,
         'Profit': profits,
         'Cumulative Profit': cumulative_profits
     })
@@ -111,8 +102,8 @@ def results_statistics(df):
     num_buy = df[df['Action'] == 'Buy'].shape[0]
     
     # Calc fraction of profitable trades
-    fraction_correct = df['Correct'].mean()
-    
+    fraction_correct = (df['Profit'] > 0).mean()
+
     # Calc avg profitability
     average_profitability = df['Profit'].mean()
     
@@ -131,7 +122,7 @@ def results_statistics(df):
     return summary_stats
 
 
-def plot_confidence_bounds(df, model_key, trade_cost, start_date=None, end_date=None):
+def plot_confidence_bounds(df, model_key, unit_size, trade_cost, start_date=None, end_date=None):
 
     df['DateTime'] = pd.to_datetime(df['DateTime'])
     
@@ -155,8 +146,8 @@ def plot_confidence_bounds(df, model_key, trade_cost, start_date=None, end_date=
                      df_filtered[ci_upper_key], color='gray', alpha=0.3, label='95% Conf Int.')
     
     # Mark points where DA exceeds Lower or Upper
-    buys = df_filtered[df_filtered.apply(lambda row: determine_action(row, model_key, trade_cost)['Action'] == 'Buy', axis=1)]
-    sells = df_filtered[df_filtered.apply(lambda row: determine_action(row, model_key, trade_cost)['Action'] == 'Sell', axis=1)]
+    buys = df_filtered[df_filtered.apply(lambda row: determine_action(row, model_key, unit_size, trade_cost)['Action'] == 'Buy', axis=1)]
+    sells = df_filtered[df_filtered.apply(lambda row: determine_action(row, model_key, unit_size, trade_cost)['Action'] == 'Sell', axis=1)]
     plt.scatter(buys['DateTime'], buys['dayAhead_NL'], color='green', label='Buy (DA < L)', marker='o')
     plt.scatter(sells['DateTime'], sells['dayAhead_NL'], color='red', label='Sell (DA > U)', marker='x')
     plt.xlabel('Date Time', fontsize=14)
@@ -177,7 +168,7 @@ def main():
     start_date = pd.to_datetime(start_date)
     combined_data = full_data[full_data['DateTime'] >= start_date]
 
-    unit_size = 1                      # Define unit size in MWh
+    unit_size = 1                     # Define unit size in MWh
     trade_cost = 0.75                  # transaction cost for a single trade in EUR
 
     results_nn = analyse_strategy(combined_data, 'nn', unit_size, trade_cost)
@@ -194,8 +185,8 @@ def main():
     # stats_wide = results_statistics(results_wide)
     # print(stats_wide)
 
-    plot_confidence_bounds(full_data, 'nn', trade_cost, '2023-07-05', '2023-08-05')
-    # plot_confidence_bounds(full_data, 'nn', trade_cost) # full set
+    plot_confidence_bounds(full_data, 'nn', unit_size, trade_cost, '2023-07-05', '2023-08-05')
+    # plot_confidence_bounds(full_data, 'nn', unit_size, trade_cost) # full set
 
     # list all actions
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
